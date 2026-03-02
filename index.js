@@ -13,7 +13,7 @@ app.use(express.json());
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
-  : ["http://localhost:3000"];
+  : ["http://localhost:3000", "http://192.168.0.187:3000"];
 
 app.use(
   cors({
@@ -40,6 +40,24 @@ async function run() {
     const userCollection = client.db("movie-matrix").collection("users");
     const movieCollection = client.db("movie-matrix").collection("movies");
 
+    // JWT Verification Middleware
+    const verifyToken = (req, res, next) => {
+      const token = req.cookies?.auth_token || req.headers.authorization?.split(" ")[1];
+
+      if (!token) {
+        return res.status(401).send({ message: "Unauthorized: No token provided" });
+      }
+
+      jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) {
+          return res.status(401).send({ message: "Unauthorized: Invalid token" });
+        }
+        req.decoded_email = decoded.email;
+        req.decoded_role = decoded.role;
+        next();
+      });
+    };
+
     // Admin Verification
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded_email;
@@ -52,12 +70,12 @@ async function run() {
           .status(403)
           .send({ message: "Forbidden: Admin access required" });
       }
-      next()
+      next();
     };
 
     app.post("/api/users/register", async (req, res) => {
       try {
-        const { name, role, email, password } = req.body;
+        const { name, role, email, password, photoURL } = req.body;
 
         if (!name || !role || !email || !password) {
           return res
@@ -79,6 +97,7 @@ async function run() {
           role,
           email,
           password: hashedPassword,
+          photoURL: photoURL || "",
           createdAt: new Date(),
         };
 
@@ -108,6 +127,7 @@ async function run() {
         return res.status(201).json({
           message: "User registered successfully",
           userId: result.insertedId,
+          user: { name, role, email, photoURL },
           token,
         });
       } catch (error) {
@@ -115,6 +135,45 @@ async function run() {
         return res.status(500).json({ message: "Internal server error" });
       }
     });
+
+    // Get current user profile
+    app.get("/api/users/profile", verifyToken, async (req, res) => {
+      try {
+        const email = req.decoded_email;
+        const user = await userCollection.findOne({ email }, { projection: { password: 0 } });
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+        res.json(user);
+      } catch (error) {
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // Update user profile
+    app.patch("/api/users/profile", verifyToken, async (req, res) => {
+      try {
+        const email = req.decoded_email;
+        const { name, photoURL } = req.body;
+        const updateDoc = {};
+        if (name) updateDoc.name = name;
+        if (photoURL) updateDoc.photoURL = photoURL;
+
+        const result = await userCollection.updateOne(
+          { email },
+          { $set: updateDoc }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        res.json({ message: "Profile updated successfully" });
+      } catch (error) {
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
 
     app.post("/api/users/login", async (req, res) => {
       try {
