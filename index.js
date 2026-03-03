@@ -75,7 +75,6 @@ async function run() {
 
     app.post("/api/users/register", async (req, res) => {
       try {
-        
         const { name, role, email, password, photoURL } = req.body;
 
         if (!name || !role || !email || !password) {
