@@ -13,7 +13,7 @@ app.use(express.json());
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
-  : ["http://localhost:3000", "http://192.168.0.187:3000"];
+  : ["http://localhost:3000"];
 
 app.use(
   cors({
@@ -22,9 +22,11 @@ app.use(
   }),
 );
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@movie-matrix-cluster.kyhktuc.mongodb.net/?appName=movie-matrix-cluster`;
+// const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@movie-matrix-cluster.kyhktuc.mongodb.net/?appName=movie-matrix-cluster`;
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@simple-crud-server.hfigrlp.mongodb.net/?appName=simple-crud-server`;
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ekpzegp.mongodb.net/?appName=Cluster0";
+
+const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -279,6 +281,53 @@ async function run() {
         res.send({ success: true, message: "Movie deleted successfully" });
       } else {
         res.status(500).send({ success: false, error: error.message });
+      }
+    });
+
+    app.get("/movies", async (req, res) => {
+      try {
+        const result = await movieCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        console.error("Error in /movies:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    app.patch("/api/movies/:id/watchlist", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { watchlistStatus } = req.body;
+
+        if (typeof watchlistStatus !== "boolean") {
+          return res
+            .status(400)
+            .json({ message: "watchlistStatus must be a boolean value" });
+        }
+
+        const { ObjectId } = require("mongodb");
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid movie ID" });
+        }
+
+        const result = await movieCollection.findOneAndUpdate(
+          { _id: new ObjectId(id) },
+          { $set: { watchlistStatus } },
+          { returnDocument: "after" },
+        );
+
+        if (!result) {
+          return res.status(404).json({ message: "Movie not found" });
+        }
+
+        res.json({
+          message: "Watchlist status updated successfully",
+          movie: result,
+        });
+      } catch (error) {
+        console.error("Error in /api/movies/:id/watchlist:", error);
+        res.status(500).json({ message: "Internal server error" });
       }
     });
 
