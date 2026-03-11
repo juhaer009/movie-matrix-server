@@ -22,11 +22,11 @@ app.use(
   }),
 );
 
-// const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@movie-matrix-cluster.kyhktuc.mongodb.net/?appName=movie-matrix-cluster`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@movie-matrix-cluster.kyhktuc.mongodb.net/?appName=movie-matrix-cluster`;
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@simple-crud-server.hfigrlp.mongodb.net/?appName=simple-crud-server`;
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ekpzegp.mongodb.net/?appName=Cluster0";
 
-const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+// const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -229,6 +229,52 @@ async function run() {
         });
       } catch (error) {
         console.error("Error in /api/users/login:", error);
+        return res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // SOCIAL LOGIN (Google) - Handles both new users and existing ones
+    app.post("/api/users/social-login", async (req, res) => {
+      try {
+        const { name, email, photoURL } = req.body;
+        // Check if user already exists
+        let user = await userCollection.findOne({ email });
+        if (!user) {
+          // Create a new user if they don't exist
+          const userDoc = {
+            name,
+            email,
+            photoURL: photoURL || "",
+            role: "user", 
+            createdAt: new Date(),
+            provider: "google" 
+          };
+          const result = await userCollection.insertOne(userDoc);
+          user = { ...userDoc, _id: result.insertedId };
+        }
+        // Generate JWT Token
+        const tokenPayload = {
+          name: user.name,
+          role: user.role,
+          email: user.email,
+        };
+        const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
+          expiresIn: "7d",
+        });
+        // Set Cookie
+        res.cookie("auth_token", token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: "strict",
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+        return res.json({
+          message: "Social login successful",
+          token,
+          user: { name: user.name, role: user.role, email: user.email }
+        });
+      } catch (error) {
+        console.error("Error in /api/users/social-login:", error);
         return res.status(500).json({ message: "Internal server error" });
       }
     });
