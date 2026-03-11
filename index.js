@@ -12,8 +12,8 @@ const port = process.env.PORT || 5000;
 app.use(express.json());
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
-  : ['http://localhost:3000', 'http://172.16.0.2:3000'];
+  ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
+  : ["http://localhost:3000", "http://172.16.0.2:3000"];
 
 app.use(
   cors({
@@ -26,7 +26,7 @@ app.use(
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@simple-crud-server.hfigrlp.mongodb.net/?appName=simple-crud-server`;
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ekpzegp.mongodb.net/?appName=Cluster0";
 
-const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+const uri = process.env.MONGODB_URI || "mongodb://localhost:27017";
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -41,6 +41,9 @@ async function run() {
 
     const userCollection = client.db("movie-matrix").collection("users");
     const movieCollection = client.db("movie-matrix").collection("movies");
+    const watchlistCollection = client
+      .db("movie-matrix")
+      .collection("watchlists");
 
     // Admin Verification
     const verifyAdmin = async (req, res, next) => {
@@ -235,40 +238,208 @@ async function run() {
       }
     });
 
-    app.patch("/api/movies/:id/watchlist", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { watchlistStatus } = req.body;
+    // app.patch("/api/movies/:id/watchlist", async (req, res) => {
+    //   try {
+    //     const { id } = req.params;
+    //     const { watchlistStatus } = req.body;
 
-        if (typeof watchlistStatus !== "boolean") {
+    //     if (typeof watchlistStatus !== "boolean") {
+    //       return res
+    //         .status(400)
+    //         .json({ message: "watchlistStatus must be a boolean value" });
+    //     }
+
+    //     const { ObjectId } = require("mongodb");
+
+    //     if (!ObjectId.isValid(id)) {
+    //       return res.status(400).json({ message: "Invalid movie ID" });
+    //     }
+
+    //     const result = await movieCollection.findOneAndUpdate(
+    //       { _id: new ObjectId(id) },
+    //       { $set: { watchlistStatus } },
+    //       { returnDocument: "after" },
+    //     );
+
+    //     if (!result) {
+    //       return res.status(404).json({ message: "Movie not found" });
+    //     }
+
+    //     res.json({
+    //       message: "Watchlist status updated successfully",
+    //       movie: result,
+    //     });
+    //   } catch (error) {
+    //     console.error("Error in /api/movies/:id/watchlist:", error);
+    //     res.status(500).json({ message: "Internal server error" });
+    //   }
+    // });
+
+    app.post("/api/watchlist", async (req, res) => {
+      try {
+        const { userId, movieId } = req.body;
+
+        if (!userId || !movieId) {
           return res
             .status(400)
-            .json({ message: "watchlistStatus must be a boolean value" });
+            .json({ message: "userId and movieId are required" });
         }
 
-        const { ObjectId } = require("mongodb");
-
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({ message: "Invalid movie ID" });
+        // Convert movieId to ObjectId if it's a valid ObjectId format, otherwise keep as string
+        let movieObjectId;
+        try {
+          if (ObjectId.isValid(movieId) && movieId.length === 24) {
+            movieObjectId = new ObjectId(movieId);
+          } else {
+            movieObjectId = movieId; // Keep as string if not valid ObjectId
+          }
+        } catch (error) {
+          movieObjectId = movieId;
         }
 
-        const result = await movieCollection.findOneAndUpdate(
-          { _id: new ObjectId(id) },
-          { $set: { watchlistStatus } },
-          { returnDocument: "after" },
-        );
+        // Check if the combination already exists
+        const existingEntry = await watchlistCollection.findOne({
+          userId: userId, // Store userId as string (for Firebase UIDs)
+          movieId: movieObjectId,
+        });
 
-        if (!result) {
-          return res.status(404).json({ message: "Movie not found" });
+        if (existingEntry) {
+          return res
+            .status(409)
+            .json({ message: "Movie already in watchlist" });
+        }
+
+        const watchlistDoc = {
+          userId: userId, // Store as string to support Firebase UIDs
+          movieId: movieObjectId,
+          createdAt: new Date(),
+        };
+
+        const result = await watchlistCollection.insertOne(watchlistDoc);
+
+        res.status(201).json({
+          message: "Movie added to watchlist successfully",
+          watchlistId: result.insertedId,
+          watchlist: watchlistDoc,
+        });
+      } catch (error) {
+        console.error("Error in /api/watchlist:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    app.delete("/api/watchlist", async (req, res) => {
+      try {
+        const { userId, movieId } = req.body;
+
+        if (!userId || !movieId) {
+          return res
+            .status(400)
+            .json({ message: "userId and movieId are required" });
+        }
+
+        // Convert movieId to ObjectId if it's a valid ObjectId format, otherwise keep as string
+        let movieObjectId;
+        try {
+          if (ObjectId.isValid(movieId) && movieId.length === 24) {
+            movieObjectId = new ObjectId(movieId);
+          } else {
+            movieObjectId = movieId;
+          }
+        } catch (error) {
+          movieObjectId = movieId;
+        }
+
+        const result = await watchlistCollection.deleteOne({
+          userId: userId,
+          movieId: movieObjectId,
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ message: "Watchlist entry not found" });
         }
 
         res.json({
-          message: "Watchlist status updated successfully",
-          movie: result,
+          message: "Movie removed from watchlist successfully",
+          deletedCount: result.deletedCount,
         });
       } catch (error) {
-        console.error("Error in /api/movies/:id/watchlist:", error);
+        console.error("Error in DELETE /api/watchlist:", error);
         res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    app.get("/api/watchlist/:userId", async (req, res) => {
+      try {
+        const { userId } = req.params;
+        console.log("Fetching watchlist for userId:", userId);
+
+        if (!userId) {
+          return res.status(400).json({ message: "userId is required" });
+        }
+
+        // Fetch watchlist entries for the user
+        const watchlistEntries = await watchlistCollection.find({ userId }).toArray();
+        console.log("Found watchlist entries:", watchlistEntries.length);
+
+        if (watchlistEntries.length === 0) {
+          return res.json({
+            message: "Watchlist is empty",
+            count: 0,
+            watchlist: []
+          });
+        }
+
+        // Manually fetch movie details for each entry
+        const watchlistWithMovies = await Promise.all(
+          watchlistEntries.map(async (entry) => {
+            let movie = null;
+            console.log("Processing entry:", entry._id, "movieId type:", typeof entry.movieId, "value:", entry.movieId);
+            
+            try {
+              // Check if movieId is already an ObjectId instance
+              if (entry.movieId instanceof ObjectId) {
+                console.log("movieId is ObjectId instance");
+                movie = await movieCollection.findOne({ _id: entry.movieId });
+              } 
+              // Check if it's a valid ObjectId string
+              else if (typeof entry.movieId === 'string' && ObjectId.isValid(entry.movieId) && entry.movieId.length === 24) {
+                console.log("movieId is valid ObjectId string");
+                movie = await movieCollection.findOne({ _id: new ObjectId(entry.movieId) });
+              } 
+              // Otherwise try as-is
+              else {
+                console.log("movieId trying as-is");
+                movie = await movieCollection.findOne({ _id: entry.movieId });
+              }
+              console.log("Found movie:", movie ? movie.title : "null");
+            } catch (error) {
+              console.error(`Error fetching movie for entry ${entry._id}:`, error.message);
+            }
+
+            return {
+              _id: entry._id,
+              userId: entry.userId,
+              movieId: entry.movieId,
+              createdAt: entry.createdAt,
+              movie: movie
+            };
+          })
+        );
+
+        console.log("Processed all entries, sorting...");
+
+        // Sort by creation date (newest first)
+        watchlistWithMovies.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+        res.json({
+          message: "Watchlist fetched successfully",
+          count: watchlistWithMovies.length,
+          watchlist: watchlistWithMovies
+        });
+      } catch (error) {
+        console.error("Error in GET /api/watchlist/:userId:", error);
+        res.status(500).json({ message: "Internal server error", error: error.message });
       }
     });
 
