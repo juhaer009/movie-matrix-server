@@ -187,6 +187,30 @@ async function run() {
         return res.status(500).json({ message: "Internal server error" });
       }
     });
+    app.get("/api/users/me", async (req, res) => {
+      try {
+        const token = req.cookies.auth_token;
+
+        if (!token) {
+          return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        const user = await userCollection.findOne({
+          email: decoded.email,
+        });
+
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        res.json(user);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
 
     //add movies
     app.post("/app/addMovies", async (req, res) => {
@@ -246,6 +270,17 @@ async function run() {
       } catch (error) {
         console.error("Error in /movies:", error);
         res.status(500).json({ message: "Internal server error" });
+      }
+    });
+    // Get single movie by ID
+    app.get("/movies/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const movie = await movieCollection.findOne({ _id: new ObjectId(id) });
+        if (!movie) return res.status(404).send({ message: "Movie not found" });
+        res.send(movie);
+      } catch (err) {
+        res.status(500).send({ error: err.message });
       }
     });
 
@@ -507,124 +542,30 @@ async function run() {
     });
 
     // update primium
-    app.post("/api/users/register", async (req, res) => {
+    app.post("/api/users/update-premium", async (req, res) => {
       try {
-        const { name, role, email, password } = req.body;
-
-        if (!name || !role || !email || !password) {
-          return res
-            .status(400)
-            .json({ message: "name, role, email and password are required" });
+        const token = req.cookies.auth_token;
+        if (!token) {
+          return res.status(401).json({ message: "Unauthorized: No token" });
         }
 
-        const existingUser = await userCollection.findOne({ email });
-        if (existingUser) {
-          return res
-            .status(409)
-            .json({ message: "User already exists with this email" });
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const email = decoded.email;
+
+        // Update premium to true in MongoDB
+        const result = await userCollection.updateOne(
+          { email },
+          { $set: { premium: true } },
+        );
+
+        if (result.modifiedCount > 0) {
+          return res.json({ message: "Premium activated successfully!" });
+        } else {
+          return res.status(400).json({ message: "Premium upgrade failed" });
         }
-
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        const userDoc = {
-          name,
-          role,
-          email,
-          password: hashedPassword,
-          premium: false,
-          createdAt: new Date(),
-        };
-
-        const result = await userCollection.insertOne(userDoc);
-
-        if (!process.env.JWT_SECRET) {
-          console.error(
-            "JWT_SECRET is not set in environment variables. Cannot create JWT token.",
-          );
-          return res
-            .status(500)
-            .json({ message: "Server configuration error" });
-        }
-
-        const tokenPayload = { name, role, email };
-        const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
-          expiresIn: "7d",
-        });
-
-        res.cookie("auth_token", token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "strict",
-          maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
-
-        return res.status(201).json({
-          message: "User registered successfully",
-          userId: result.insertedId,
-          token,
-          premium: false,
-        });
-      } catch (error) {
-        console.error("Error in /api/users/register:", error);
-        return res.status(500).json({ message: "Internal server error" });
-      }
-    });
-
-    app.post("/api/users/login", async (req, res) => {
-      try {
-        const { email, password } = req.body;
-
-        if (!email || !password) {
-          return res
-            .status(400)
-            .json({ message: "email and password are required" });
-        }
-
-        const user = await userCollection.findOne({ email });
-        if (!user) {
-          return res.status(401).json({ message: "Invalid email or password" });
-        }
-
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-          return res.status(401).json({ message: "Invalid email or password" });
-        }
-
-        if (!process.env.JWT_SECRET) {
-          console.error(
-            "JWT_SECRET is not set in environment variables. Cannot create JWT token.",
-          );
-          return res
-            .status(500)
-            .json({ message: "Server configuration error" });
-        }
-
-        const tokenPayload = {
-          name: user.name,
-          role: user.role,
-          email: user.email,
-          premium: user.premium || false,
-        };
-
-        const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
-          expiresIn: "7d",
-        });
-
-        res.cookie("auth_token", token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "strict",
-          maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
-
-        return res.json({
-          message: "Login successful",
-          token,
-          premium: user.premium || false,
-        });
-      } catch (error) {
-        console.error("Error in /api/users/login:", error);
-        return res.status(500).json({ message: "Internal server error" });
+      } catch (err) {
+        console.error("Error in /update-premium:", err);
+        return res.status(500).json({ message: "Server error" });
       }
     });
 
