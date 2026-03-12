@@ -13,12 +13,9 @@ const port = process.env.PORT || 5000;
 const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-const cookieParser = require("cookie-parser");
-
 app.use(cookieParser());
 //middleware
 app.use(express.json());
-app.use(cookieParser());
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
