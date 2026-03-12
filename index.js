@@ -8,6 +8,13 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const port = process.env.PORT || 5000;
 
+// ✅ Import Stripe
+const Stripe = require("stripe");
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+const cookieParser = require("cookie-parser");
+
+app.use(cookieParser());
 //middleware
 app.use(express.json());
 
@@ -22,11 +29,11 @@ app.use(
   }),
 );
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@movie-matrix-cluster.kyhktuc.mongodb.net/?appName=movie-matrix-cluster`;
+// const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@movie-matrix-cluster.kyhktuc.mongodb.net/?appName=movie-matrix-cluster`;
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@simple-crud-server.hfigrlp.mongodb.net/?appName=simple-crud-server`;
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ekpzegp.mongodb.net/?appName=Cluster0";
 
-// const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+// const uri = process.env.MONGODB_URI || "mongodb://localhost:27017";
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -81,7 +88,7 @@ async function run() {
           role,
           email,
           password: hashedPassword,
-          photoURL: photoURL || "",
+          premium: false,
           createdAt: new Date(),
         };
 
@@ -113,6 +120,7 @@ async function run() {
           userId: result.insertedId,
           user: { name, role, email, photoURL },
           token,
+          premium: false,
         });
       } catch (error) {
         console.error("Error in /api/users/register:", error);
@@ -192,6 +200,7 @@ async function run() {
           name: user.name,
           role: user.role,
           email: user.email,
+          premium: user.premium || false,
         };
 
         const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
@@ -208,10 +217,35 @@ async function run() {
         return res.json({
           message: "Login successful",
           token,
+          premium: user.premium || false,
         });
       } catch (error) {
         console.error("Error in /api/users/login:", error);
         return res.status(500).json({ message: "Internal server error" });
+      }
+    });
+    app.get("/api/users/me", async (req, res) => {
+      try {
+        const token = req.cookies.auth_token;
+
+        if (!token) {
+          return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        const user = await userCollection.findOne({
+          email: decoded.email,
+        });
+
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        res.json(user);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
       }
     });
 
@@ -319,6 +353,17 @@ async function run() {
       } catch (error) {
         console.error("Error in /movies:", error);
         res.status(500).json({ message: "Internal server error" });
+      }
+    });
+    // Get single movie by ID
+    app.get("/movies/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const movie = await movieCollection.findOne({ _id: new ObjectId(id) });
+        if (!movie) return res.status(404).send({ message: "Movie not found" });
+        res.send(movie);
+      } catch (err) {
+        res.status(500).send({ error: err.message });
       }
     });
 
@@ -463,14 +508,16 @@ async function run() {
         }
 
         // Fetch watchlist entries for the user
-        const watchlistEntries = await watchlistCollection.find({ userId }).toArray();
+        const watchlistEntries = await watchlistCollection
+          .find({ userId })
+          .toArray();
         console.log("Found watchlist entries:", watchlistEntries.length);
 
         if (watchlistEntries.length === 0) {
           return res.json({
             message: "Watchlist is empty",
             count: 0,
-            watchlist: []
+            watchlist: [],
           });
         }
 
@@ -478,19 +525,32 @@ async function run() {
         const watchlistWithMovies = await Promise.all(
           watchlistEntries.map(async (entry) => {
             let movie = null;
-            console.log("Processing entry:", entry._id, "movieId type:", typeof entry.movieId, "value:", entry.movieId);
-            
+            console.log(
+              "Processing entry:",
+              entry._id,
+              "movieId type:",
+              typeof entry.movieId,
+              "value:",
+              entry.movieId,
+            );
+
             try {
               // Check if movieId is already an ObjectId instance
               if (entry.movieId instanceof ObjectId) {
                 console.log("movieId is ObjectId instance");
                 movie = await movieCollection.findOne({ _id: entry.movieId });
-              } 
+              }
               // Check if it's a valid ObjectId string
-              else if (typeof entry.movieId === 'string' && ObjectId.isValid(entry.movieId) && entry.movieId.length === 24) {
+              else if (
+                typeof entry.movieId === "string" &&
+                ObjectId.isValid(entry.movieId) &&
+                entry.movieId.length === 24
+              ) {
                 console.log("movieId is valid ObjectId string");
-                movie = await movieCollection.findOne({ _id: new ObjectId(entry.movieId) });
-              } 
+                movie = await movieCollection.findOne({
+                  _id: new ObjectId(entry.movieId),
+                });
+              }
               // Otherwise try as-is
               else {
                 console.log("movieId trying as-is");
@@ -498,7 +558,10 @@ async function run() {
               }
               console.log("Found movie:", movie ? movie.title : "null");
             } catch (error) {
-              console.error(`Error fetching movie for entry ${entry._id}:`, error.message);
+              console.error(
+                `Error fetching movie for entry ${entry._id}:`,
+                error.message,
+              );
             }
 
             return {
@@ -506,24 +569,86 @@ async function run() {
               userId: entry.userId,
               movieId: entry.movieId,
               createdAt: entry.createdAt,
-              movie: movie
+              movie: movie,
             };
-          })
+          }),
         );
 
         console.log("Processed all entries, sorting...");
 
         // Sort by creation date (newest first)
-        watchlistWithMovies.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        watchlistWithMovies.sort(
+          (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
+        );
 
         res.json({
           message: "Watchlist fetched successfully",
           count: watchlistWithMovies.length,
-          watchlist: watchlistWithMovies
+          watchlist: watchlistWithMovies,
         });
       } catch (error) {
         console.error("Error in GET /api/watchlist/:userId:", error);
-        res.status(500).json({ message: "Internal server error", error: error.message });
+        res
+          .status(500)
+          .json({ message: "Internal server error", error: error.message });
+      }
+    });
+
+    //payment related apis
+    app.post("/create-checkout-session", async (req, res) => {
+      try {
+        const { productName, price, quantity } = req.body;
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: { name: productName },
+                unit_amount: price * 100,
+              },
+              quantity,
+            },
+          ],
+          mode: "payment",
+          success_url: "http://localhost:3000/payment-success",
+          cancel_url: "http://localhost:3000/payment-cancel",
+        });
+
+        // ✅ Send session URL
+        res.json({ url: session.url });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Stripe session creation failed" });
+      }
+    });
+
+    // update primium
+    app.post("/api/users/update-premium", async (req, res) => {
+      try {
+        const token = req.cookies.auth_token;
+        if (!token) {
+          return res.status(401).json({ message: "Unauthorized: No token" });
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const email = decoded.email;
+
+        // Update premium to true in MongoDB
+        const result = await userCollection.updateOne(
+          { email },
+          { $set: { premium: true } },
+        );
+
+        if (result.modifiedCount > 0) {
+          return res.json({ message: "Premium activated successfully!" });
+        } else {
+          return res.status(400).json({ message: "Premium upgrade failed" });
+        }
+      } catch (err) {
+        console.error("Error in /update-premium:", err);
+        return res.status(500).json({ message: "Server error" });
       }
     });
 
