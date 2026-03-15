@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 const app = express();
 
 require("dotenv").config();
@@ -11,8 +12,6 @@ const port = process.env.PORT || 5000;
 // ✅ Import Stripe
 const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-
-const cookieParser = require("cookie-parser");
 
 app.use(cookieParser());
 //middleware
@@ -48,6 +47,23 @@ async function run() {
 
     const userCollection = client.db("movie-matrix").collection("users");
     const movieCollection = client.db("movie-matrix").collection("movies");
+
+    // Token Verification
+    const verifyToken = (req, res, next) => {
+      const token = req.cookies?.auth_token || req.headers.authorization?.split(" ")[1];
+      
+      if (!token) {
+        return res.status(401).send({ message: "Unauthorized: No token provided" });
+      }
+      
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.decoded_email = decoded.email;
+        next();
+      } catch (error) {
+        return res.status(401).send({ message: "Unauthorized: Invalid token" });
+      }
+    };
 
     // Admin Verification
     const verifyAdmin = async (req, res, next) => {
@@ -161,6 +177,25 @@ async function run() {
         }
 
         res.json({ message: "Profile updated successfully" });
+      } catch (error) {
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // Update user to premium
+    app.post("/api/users/update-premium", verifyToken, async (req, res) => {
+      try {
+        const email = req.decoded_email;
+        const result = await userCollection.updateOne(
+          { email },
+          { $set: { premium: true } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        res.json({ message: "Successfully upgraded to Premium! 🚀" });
       } catch (error) {
         res.status(500).json({ message: "Internal server error" });
       }
