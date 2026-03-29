@@ -25,10 +25,15 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
   : ["http://localhost:3000", "http://172.16.0.2:3000"];
 
+// Log allowed origins for debugging
+console.log("✅ CORS Allowed Origins:", allowedOrigins);
+
 app.use(
   cors({
     origin: allowedOrigins,
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
 
@@ -1080,7 +1085,9 @@ app.get("/", (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
+  console.log(`🎬 MovieMatrix Server running on port ${port}`);
+  console.log(`📍 Server URL: http://localhost:${port}`);
+  console.log(`✅ CORS enabled for: ${allowedOrigins.join(", ")}`);
 });
 
 
