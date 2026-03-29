@@ -1,10 +1,11 @@
+
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const app = express();
 
 require("dotenv").config();
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId, ListSearchIndexesCursor } = require("mongodb");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const port = process.env.PORT || 5000;
@@ -13,9 +14,12 @@ const port = process.env.PORT || 5000;
 const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
+const cookieParser = require("cookie-parser");
+
 app.use(cookieParser());
 //middleware
 app.use(express.json());
+app.use("/videos", express.static("public/videos"));
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim())
@@ -28,7 +32,7 @@ app.use(
   }),
 );
 
-// const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@movie-matrix-cluster.kyhktuc.mongodb.net/?appName=movie-matrix-cluster`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@movie-matrix-cluster.kyhktuc.mongodb.net/?appName=movie-matrix-cluster`;
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@simple-crud-server.hfigrlp.mongodb.net/?appName=simple-crud-server`;
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ekpzegp.mongodb.net/?appName=Cluster0";
 
@@ -47,23 +51,30 @@ async function run() {
 
     const userCollection = client.db("movie-matrix").collection("users");
     const movieCollection = client.db("movie-matrix").collection("movies");
-
-    // Token Verification
+    const watchlistCollection = client.db("movie-matrix").collection("watchlist");
+    const favouriteCollection = client.db("movie-matrix").collection("favourites");
+    const ratingCollection = client.db("movie-matrix").collection("ratings");
+    const seriesCollection = client.db("movie-matrix").collection("series");
+    const seriesWatchlistCollection = client.db("movie-matrix").collection("series_watchlist");
+    const kidsCollection = client.db("movie-matrix").collection("kids_movies");
     const verifyToken = (req, res, next) => {
-      const token = req.cookies?.auth_token || req.headers.authorization?.split(" ")[1];
-      
-      if (!token) {
-        return res.status(401).send({ message: "Unauthorized: No token provided" });
-      }
-      
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.decoded_email = decoded.email;
-        next();
-      } catch (error) {
-        return res.status(401).send({ message: "Unauthorized: Invalid token" });
-      }
-    };
+  try {
+    const token = req.cookies.auth_token;
+
+    if (!token) {
+      return res.status(401).send({ message: "Unauthorized: No token" });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    req.decoded_email = decoded.email;
+    req.decoded = decoded;
+
+    next();
+  } catch (error) {
+    return res.status(401).send({ message: "Unauthorized: Invalid token" });
+  }
+};
 
     // Admin Verification
     const verifyAdmin = async (req, res, next) => {
@@ -103,9 +114,13 @@ async function run() {
           name,
           role,
           email,
+           photoURL,
           password: hashedPassword,
           premium: false,
           createdAt: new Date(),
+            moviesWatched: 0,
+  totalHours: 0,
+  recentMovies: [],
         };
 
         const result = await userCollection.insertOne(userDoc);
@@ -144,62 +159,6 @@ async function run() {
       }
     });
 
-    // Get current user profile
-    app.get("/api/users/profile", verifyToken, async (req, res) => {
-      try {
-        const email = req.decoded_email;
-        const user = await userCollection.findOne({ email }, { projection: { password: 0 } });
-        if (!user) {
-          return res.status(404).json({ message: "User not found" });
-        }
-        res.json(user);
-      } catch (error) {
-        res.status(500).json({ message: "Internal server error" });
-      }
-    });
-
-    // Update user profile
-    app.patch("/api/users/profile", verifyToken, async (req, res) => {
-      try {
-        const email = req.decoded_email;
-        const { name, photoURL } = req.body;
-        const updateDoc = {};
-        if (name) updateDoc.name = name;
-        if (photoURL) updateDoc.photoURL = photoURL;
-
-        const result = await userCollection.updateOne(
-          { email },
-          { $set: updateDoc }
-        );
-
-        if (result.matchedCount === 0) {
-          return res.status(404).json({ message: "User not found" });
-        }
-
-        res.json({ message: "Profile updated successfully" });
-      } catch (error) {
-        res.status(500).json({ message: "Internal server error" });
-      }
-    });
-
-    // Update user to premium
-    app.post("/api/users/update-premium", verifyToken, async (req, res) => {
-      try {
-        const email = req.decoded_email;
-        const result = await userCollection.updateOne(
-          { email },
-          { $set: { premium: true } }
-        );
-
-        if (result.matchedCount === 0) {
-          return res.status(404).json({ message: "User not found" });
-        }
-
-        res.json({ message: "Successfully upgraded to Premium! 🚀" });
-      } catch (error) {
-        res.status(500).json({ message: "Internal server error" });
-      }
-    });
 
 
     app.post("/api/users/login", async (req, res) => {
@@ -259,7 +218,7 @@ async function run() {
         return res.status(500).json({ message: "Internal server error" });
       }
     });
-    app.get("/api/users/me", async (req, res) => {
+    app.get("/api/users/me", verifyToken, async (req, res) => {
       try {
         const token = req.cookies.auth_token;
 
@@ -329,6 +288,58 @@ async function run() {
         return res.status(500).json({ message: "Internal server error" });
       }
     });
+app.get("/api/users/:email", async (req, res) => {
+  const email = req.params.email;
+
+  try {
+    const user = await userCollection.findOne({ email: email });
+    res.send(user);
+  } catch (error) {
+    res.status(500).send({ message: "Failed to get user", error });
+  }
+});
+
+app.post("/watch-movie", verifyToken, async (req, res) => {
+  try {
+    const { movieId, title, poster, durationWatched } = req.body;
+
+// ✅ Only check null or undefined
+if (!movieId || !title || durationWatched == null) {
+  return res.status(400).json({ message: "Missing fields" });
+}
+
+    // 🔑 get user email from JWT
+    const email = req.decoded_email;
+    if (!email) return res.status(401).json({ message: "Unauthorized" });
+
+    // Make sure user exists (upsert)
+    await userCollection.updateOne(
+      { email },
+      { $setOnInsert: { moviesWatched: 0, totalHours: 0, recentMovies: [] } },
+      { upsert: true }
+    );
+
+    // Increment movies watched & total hours, push recent movie
+    const result = await userCollection.updateOne(
+      { email },
+      {
+        $inc: { moviesWatched: 1, totalHours: Number(durationWatched) },
+        $push: { recentMovies: { movieId, title, poster, watchedAt: new Date() } }
+      }
+    );
+
+    // Send back updated user without password
+    const updatedUser = await userCollection.findOne(
+      { email },
+      { projection: { password: 0 } }
+    );
+
+    res.json(updatedUser);
+  } catch (err) {
+    console.error("Watch-movie error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
     //add movies
     app.post("/app/addMovies", async (req, res) => {
@@ -381,6 +392,8 @@ async function run() {
       }
     });
 
+
+
     app.get("/movies", async (req, res) => {
       try {
         const result = await movieCollection.find().toArray();
@@ -402,44 +415,95 @@ async function run() {
       }
     });
 
-    // app.patch("/api/movies/:id/watchlist", async (req, res) => {
-    //   try {
-    //     const { id } = req.params;
-    //     const { watchlistStatus } = req.body;
+app.post("/api/series", async (req, res) => {
+  try {
+    const { title, image, description, seasons } = req.body;
 
-    //     if (typeof watchlistStatus !== "boolean") {
-    //       return res
-    //         .status(400)
-    //         .json({ message: "watchlistStatus must be a boolean value" });
-    //     }
+    if (!title || !image) {
+      return res.status(400).json({ message: "title & image required" });
+    }
 
-    //     const { ObjectId } = require("mongodb");
+    const series = {
+      title,
+      image,
+      description,
+      seasons: seasons || [],
+      createdAt: new Date(),
+    };
 
-    //     if (!ObjectId.isValid(id)) {
-    //       return res.status(400).json({ message: "Invalid movie ID" });
-    //     }
+    const result = await seriesCollection.insertOne(series);
 
-    //     const result = await movieCollection.findOneAndUpdate(
-    //       { _id: new ObjectId(id) },
-    //       { $set: { watchlistStatus } },
-    //       { returnDocument: "after" },
-    //     );
+    res.status(201).json({
+      message: "Series added successfully",
+      id: result.insertedId,
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+app.get("/api/series", async (req, res) => {
+  try {
+    const result = await seriesCollection.find().toArray();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+app.get("/api/series/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
 
-    //     if (!result) {
-    //       return res.status(404).json({ message: "Movie not found" });
-    //     }
+    const series = await seriesCollection.findOne({
+      _id: new ObjectId(id),
+    });
 
-    //     res.json({
-    //       message: "Watchlist status updated successfully",
-    //       movie: result,
-    //     });
-    //   } catch (error) {
-    //     console.error("Error in /api/movies/:id/watchlist:", error);
-    //     res.status(500).json({ message: "Internal server error" });
-    //   }
-    // });
+    if (!series) {
+      return res.status(404).json({ message: "Series not found" });
+    }
 
-    app.post("/api/watchlist", async (req, res) => {
+    res.json(series);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+app.get("/api/episode/:id", async (req, res) => {
+  try {
+    const episodeId = req.params.id;
+
+    const allSeries = await seriesCollection.find().toArray();
+
+    for (let series of allSeries) {
+      if (!series.seasons) continue;
+
+      for (let season of series.seasons) {
+        if (!season.episodes) continue;
+
+        const ep = season.episodes.find(
+          (e) => e && e._id && e._id.toString() === episodeId
+        );
+
+        if (ep) {
+          return res.json({
+            ...ep,
+            seriesId: series._id,
+            seriesTitle: series.title,
+            seasonNumber: season.season,
+          });
+        }
+      }
+    }
+
+    res.status(404).json({ message: "Episode not found" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+  app.post("/api/watchlist", async (req, res) => {
       try {
         const { userId, movieId } = req.body;
 
@@ -687,6 +751,321 @@ async function run() {
       }
     });
 
+    //payment related apis
+    app.post("/create-checkout-session", async (req, res) => {
+      try {
+        const { productName, price, quantity } = req.body;
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: { name: productName },
+                unit_amount: price * 100,
+              },
+              quantity,
+            },
+          ],
+          mode: "payment",
+          success_url: "http://localhost:3000/payment-success",
+          cancel_url: "http://localhost:3000/payment-cancel",
+        });
+
+        // ✅ Send session URL
+        res.json({ url: session.url });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Stripe session creation failed" });
+      }
+    });
+
+    // update primium
+    app.post("/api/users/update-premium", async (req, res) => {
+      try {
+        const token = req.cookies.auth_token;
+        if (!token) {
+          return res.status(401).json({ message: "Unauthorized: No token" });
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const email = decoded.email;
+
+        // Update premium to true in MongoDB
+        const result = await userCollection.updateOne(
+          { email },
+          { $set: { premium: true } },
+        );
+
+        if (result.modifiedCount > 0) {
+          return res.json({ message: "Premium activated successfully!" });
+        } else {
+          return res.status(400).json({ message: "Premium upgrade failed" });
+        }
+      } catch (err) {
+        console.error("Error in /update-premium:", err);
+        return res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    app.post("/api/favourites", verifyToken, async (req, res) => {
+  try {
+    const email = req.decoded_email;
+    const { movieId } = req.body;
+
+    if (!movieId) {
+      return res.status(400).json({ message: "movieId required" });
+    }
+
+    const user = await userCollection.findOne({ email });
+
+    const userId = user._id.toString();
+
+    const exists = await favouriteCollection.findOne({
+      userId,
+      movieId,
+    });
+
+    if (exists) {
+      await favouriteCollection.deleteOne({ userId, movieId });
+
+      return res.json({ message: "Removed from favourites" });
+    }
+
+    const fav = {
+      userId,
+      movieId,
+      createdAt: new Date(),
+    };
+
+    await favouriteCollection.insertOne(fav);
+
+    res.json({ message: "Added to favourites", fav });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+app.get("/api/favourites", verifyToken, async (req, res) => {
+  try {
+    const email = req.decoded_email;
+
+    const user = await userCollection.findOne({ email });
+    const userId = user._id.toString();
+
+    const favs = await favouriteCollection.find({ userId }).toArray();
+
+    res.json(favs);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+app.post("/api/ratings", verifyToken, async (req, res) => {
+  try {
+    const email = req.decoded_email;
+    const { movieId, rating } = req.body;
+
+    if (!movieId || !rating) {
+      return res.status(400).json({ message: "movieId & rating required" });
+    }
+
+    const user = await userCollection.findOne({ email });
+    const userId = user._id.toString();
+
+    const exists = await ratingCollection.findOne({ userId, movieId });
+
+    
+    if (exists) {
+      await ratingCollection.updateOne(
+        { userId, movieId },
+        { $set: { rating } }
+      );
+
+      return res.json({ message: "Rating updated" });
+    }
+
+    
+    await ratingCollection.insertOne({
+      userId,
+      movieId,
+      rating,
+      createdAt: new Date(),
+    });
+
+    res.json({ message: "Rating added" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+app.get("/api/ratings", verifyToken, async (req, res) => {
+  try {
+    const email = req.decoded_email;
+
+    const user = await userCollection.findOne({ email });
+    const userId = user._id.toString();
+
+    const ratings = await ratingCollection
+      .find({ userId })
+      .toArray();
+
+    res.json(ratings);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+app.get("/api/ratings/:movieId", async (req, res) => {
+  try {
+    const { movieId } = req.params;
+
+    const ratings = await ratingCollection.find({ movieId }).toArray();
+
+    if (ratings.length === 0) {
+      return res.json({ average: 0, count: 0 });
+    }
+
+    const total = ratings.reduce((sum, r) => sum + r.rating, 0);
+
+    const average = total / ratings.length;
+
+    res.json({
+      average: Number(average.toFixed(1)),
+      count: ratings.length,
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.post("/api/series-watchlist", async (req, res) => {
+  try {
+    const { userId, seriesId, seasonNumber, episodeId } = req.body;
+
+    if (!userId || !seriesId || !episodeId) {
+      return res.status(400).json({ message: "Missing fields" });
+    }
+
+    const existing = await seriesWatchlistCollection.findOne({
+      userId,
+      seriesId,
+    });
+
+    if (existing) {
+      const alreadyExists = existing.episodes?.some(
+        (ep) => ep.episodeId === episodeId
+      );
+
+      if (alreadyExists) {
+        return res.status(409).json({ message: "Episode already added" });
+      }
+
+      await seriesWatchlistCollection.updateOne(
+        { userId, seriesId },
+        {
+          $push: {
+            episodes: { episodeId, seasonNumber },
+          },
+        }
+      );
+    } else {
+      await seriesWatchlistCollection.insertOne({
+        userId,
+        seriesId,
+        episodes: [{ episodeId, seasonNumber }],
+        createdAt: new Date(),
+      });
+    }
+
+    res.json({ message: "Added successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+app.delete("/api/series-watchlist", async (req, res) => {
+  try {
+    const { userId, seriesId, episodeId } = req.body;
+
+    await seriesWatchlistCollection.updateOne(
+      { userId, seriesId },
+      {
+        $pull: {
+          episodes: { episodeId },
+        },
+      }
+    );
+
+    res.json({ message: "Episode removed" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.get("/api/series-watchlist/:userId", async (req, res) => {
+  const { userId } = req.params;
+
+  const data = await seriesWatchlistCollection.find({ userId }).toArray();
+
+  const result = await Promise.all(
+    data.map(async (item) => {
+      const series = await seriesCollection.findOne({
+        _id: new ObjectId(item.seriesId),
+      });
+
+      return {
+        seriesId: item.seriesId,
+        title: series?.title,
+        image: series?.image,
+        totalEpisodes: item.episodes?.length || 0,
+        episodes: item.episodes,
+      };
+    })
+  );
+
+  res.json({ watchlist: result });
+});
+
+app.get("/api/kids/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const movie = await kidsCollection.findOne({ _id: new ObjectId(id) });
+    if (!movie) return res.status(404).json({ message: "Movie not found" });
+    res.json(movie);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+app.get("/api/kids", async (req, res) => {
+  try {
+    const movies = await kidsCollection.find().toArray();
+    res.json(movies); 
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+app.post("/api/kids", async (req, res) => {
+  try {
+    const { title, description, image, video, genre } = req.body;
+    if (!title || !video) return res.status(400).json({ message: "Missing fields" });
+
+    const result = await kidsCollection.insertOne({
+      title,
+      description,
+      image,
+      video,
+      genre,
+      createdAt: new Date(),
+    });
+
+    res.status(201).json({ message: "Kids movie added", id: result.insertedId });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!",
@@ -703,3 +1082,5 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
+
+
