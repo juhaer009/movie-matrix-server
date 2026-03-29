@@ -14,7 +14,7 @@ const port = process.env.PORT || 5000;
 const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-const cookieParser = require("cookie-parser");
+
 
 app.use(cookieParser());
 //middleware
@@ -47,7 +47,7 @@ const client = new MongoClient(uri, {
 });
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
 
     const userCollection = client.db("movie-matrix").collection("users");
     const movieCollection = client.db("movie-matrix").collection("movies");
