@@ -1,6 +1,7 @@
 
 const express = require("express");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 const app = express();
 
 require("dotenv").config();
@@ -606,14 +607,16 @@ app.get("/api/episode/:id", async (req, res) => {
         }
 
         // Fetch watchlist entries for the user
-        const watchlistEntries = await watchlistCollection.find({ userId }).toArray();
+        const watchlistEntries = await watchlistCollection
+          .find({ userId })
+          .toArray();
         console.log("Found watchlist entries:", watchlistEntries.length);
 
         if (watchlistEntries.length === 0) {
           return res.json({
             message: "Watchlist is empty",
             count: 0,
-            watchlist: []
+            watchlist: [],
           });
         }
 
@@ -621,19 +624,32 @@ app.get("/api/episode/:id", async (req, res) => {
         const watchlistWithMovies = await Promise.all(
           watchlistEntries.map(async (entry) => {
             let movie = null;
-            console.log("Processing entry:", entry._id, "movieId type:", typeof entry.movieId, "value:", entry.movieId);
-            
+            console.log(
+              "Processing entry:",
+              entry._id,
+              "movieId type:",
+              typeof entry.movieId,
+              "value:",
+              entry.movieId,
+            );
+
             try {
               // Check if movieId is already an ObjectId instance
               if (entry.movieId instanceof ObjectId) {
                 console.log("movieId is ObjectId instance");
                 movie = await movieCollection.findOne({ _id: entry.movieId });
-              } 
+              }
               // Check if it's a valid ObjectId string
-              else if (typeof entry.movieId === 'string' && ObjectId.isValid(entry.movieId) && entry.movieId.length === 24) {
+              else if (
+                typeof entry.movieId === "string" &&
+                ObjectId.isValid(entry.movieId) &&
+                entry.movieId.length === 24
+              ) {
                 console.log("movieId is valid ObjectId string");
-                movie = await movieCollection.findOne({ _id: new ObjectId(entry.movieId) });
-              } 
+                movie = await movieCollection.findOne({
+                  _id: new ObjectId(entry.movieId),
+                });
+              }
               // Otherwise try as-is
               else {
                 console.log("movieId trying as-is");
@@ -641,7 +657,10 @@ app.get("/api/episode/:id", async (req, res) => {
               }
               console.log("Found movie:", movie ? movie.title : "null");
             } catch (error) {
-              console.error(`Error fetching movie for entry ${entry._id}:`, error.message);
+              console.error(
+                `Error fetching movie for entry ${entry._id}:`,
+                error.message,
+              );
             }
 
             return {
@@ -649,24 +668,86 @@ app.get("/api/episode/:id", async (req, res) => {
               userId: entry.userId,
               movieId: entry.movieId,
               createdAt: entry.createdAt,
-              movie: movie
+              movie: movie,
             };
-          })
+          }),
         );
 
         console.log("Processed all entries, sorting...");
 
         // Sort by creation date (newest first)
-        watchlistWithMovies.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        watchlistWithMovies.sort(
+          (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
+        );
 
         res.json({
           message: "Watchlist fetched successfully",
           count: watchlistWithMovies.length,
-          watchlist: watchlistWithMovies
+          watchlist: watchlistWithMovies,
         });
       } catch (error) {
         console.error("Error in GET /api/watchlist/:userId:", error);
-        res.status(500).json({ message: "Internal server error", error: error.message });
+        res
+          .status(500)
+          .json({ message: "Internal server error", error: error.message });
+      }
+    });
+
+    //payment related apis
+    app.post("/create-checkout-session", async (req, res) => {
+      try {
+        const { productName, price, quantity } = req.body;
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: { name: productName },
+                unit_amount: price * 100,
+              },
+              quantity,
+            },
+          ],
+          mode: "payment",
+          success_url: "http://localhost:3000/payment-success",
+          cancel_url: "http://localhost:3000/payment-cancel",
+        });
+
+        // ✅ Send session URL
+        res.json({ url: session.url });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Stripe session creation failed" });
+      }
+    });
+
+    // update primium
+    app.post("/api/users/update-premium", async (req, res) => {
+      try {
+        const token = req.cookies.auth_token;
+        if (!token) {
+          return res.status(401).json({ message: "Unauthorized: No token" });
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const email = decoded.email;
+
+        // Update premium to true in MongoDB
+        const result = await userCollection.updateOne(
+          { email },
+          { $set: { premium: true } },
+        );
+
+        if (result.modifiedCount > 0) {
+          return res.json({ message: "Premium activated successfully!" });
+        } else {
+          return res.status(400).json({ message: "Premium upgrade failed" });
+        }
+      } catch (err) {
+        console.error("Error in /update-premium:", err);
+        return res.status(500).json({ message: "Server error" });
       }
     });
 
