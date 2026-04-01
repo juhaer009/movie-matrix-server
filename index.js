@@ -14,7 +14,7 @@ const port = process.env.PORT || 5000;
 const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-const cookieParser = require("cookie-parser");
+
 
 app.use(cookieParser());
 //middleware
@@ -57,6 +57,7 @@ async function run() {
     const seriesCollection = client.db("movie-matrix").collection("series");
     const seriesWatchlistCollection = client.db("movie-matrix").collection("series_watchlist");
     const kidsCollection = client.db("movie-matrix").collection("kids_movies");
+    const recentlyViewedCollection = client.db("movie-matrix").collection("recently_viewed");
     const verifyToken = (req, res, next) => {
   try {
     const token = req.cookies.auth_token;
@@ -1063,6 +1064,63 @@ app.post("/api/kids", async (req, res) => {
 
     res.status(201).json({ message: "Kids movie added", id: result.insertedId });
   } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+// Add recently viewed item
+app.post("/api/recently-viewed", verifyToken, async (req, res) => {
+  try {
+    const email = req.decoded_email;
+    const { itemId, type, title, image } = req.body;
+
+    if (!itemId || !type || !title) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const user = await userCollection.findOne({ email });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const userId = user._id.toString();
+
+    // ✅ Remove duplicate
+    await recentlyViewedCollection.deleteOne({ userId, itemId });
+
+    // Add new
+    const newItem = {
+      userId,
+      itemId,
+      type, 
+      title,
+      image,
+      watchedAt: new Date(),
+    };
+
+    const result = await recentlyViewedCollection.insertOne(newItem);
+
+    res.status(201).json({ message: "Added to recently viewed", item: newItem });
+  } catch (err) {
+    console.error("Error in /api/recently-viewed:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+// Get last 10 recently viewed items for a user
+app.get("/api/recently-viewed", verifyToken, async (req, res) => {
+  try {
+    const email = req.decoded_email;
+    const user = await userCollection.findOne({ email });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const userId = user._id.toString();
+
+    const recentItems = await recentlyViewedCollection
+      .find({ userId })
+      .sort({ watchedAt: -1 }) 
+      .limit(10)
+      .toArray();
+
+    res.json(recentItems);
+  } catch (err) {
+    console.error("Error in GET /api/recently-viewed:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
