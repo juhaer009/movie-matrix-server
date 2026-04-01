@@ -537,7 +537,7 @@ app.get("/api/episode/:id", async (req, res) => {
         }
 
         const watchlistDoc = {
-          userId: userId, // Store as string to support Firebase UIDs
+          userId: userId, 
           movieId: movieObjectId,
           createdAt: new Date(),
         };
