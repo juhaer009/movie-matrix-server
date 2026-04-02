@@ -92,75 +92,108 @@ async function run() {
       next();
     };
 
-    app.post("/api/users/register", async (req, res) => {
-      try {
-        const { name, role, email, password, photoURL } = req.body;
+  //   app.post("/api/users/register", async (req, res) => {
+  //     try {
+  //       const { name, role, email, password, photoURL } = req.body;
 
-        if (!name || !role || !email || !password) {
-          return res
-            .status(400)
-            .json({ message: "name, role, email and password are required" });
-        }
+  //       if (!name || !role || !email || !password) {
+  //         return res
+  //           .status(400)
+  //           .json({ message: "name, role, email and password are required" });
+  //       }
 
-        const existingUser = await userCollection.findOne({ email });
-        if (existingUser) {
-          return res
-            .status(409)
-            .json({ message: "User already exists with this email" });
-        }
+  //       const existingUser = await userCollection.findOne({ email });
+  //       if (existingUser) {
+  //         return res
+  //           .status(409)
+  //           .json({ message: "User already exists with this email" });
+  //       }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+  //       const hashedPassword = await bcrypt.hash(password, 10);
 
-        const userDoc = {
-          name,
-          role,
-          email,
-           photoURL,
-          password: hashedPassword,
-          premium: false,
-          createdAt: new Date(),
-            moviesWatched: 0,
-  totalHours: 0,
-  recentMovies: [],
-        };
+  //       const userDoc = {
+  //         name,
+  //         role,
+  //         email,
+  //          photoURL,
+  //         password: hashedPassword,
+  //         premium: false,
+  //         createdAt: new Date(),
+  //           moviesWatched: 0,
+  // totalHours: 0,
+  // recentMovies: [],
+  //       };
 
-        const result = await userCollection.insertOne(userDoc);
+  //       const result = await userCollection.insertOne(userDoc);
 
-        if (!process.env.JWT_SECRET) {
-          console.error(
-            "JWT_SECRET is not set in environment variables. Cannot create JWT token.",
-          );
-          return res
-            .status(500)
-            .json({ message: "Server configuration error" });
-        }
+  //       if (!process.env.JWT_SECRET) {
+  //         console.error(
+  //           "JWT_SECRET is not set in environment variables. Cannot create JWT token.",
+  //         );
+  //         return res
+  //           .status(500)
+  //           .json({ message: "Server configuration error" });
+  //       }
 
-        const tokenPayload = { name, role, email };
-        const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
-          expiresIn: "7d",
-        });
+  //       const tokenPayload = { name, role, email };
+  //       const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
+  //         expiresIn: "7d",
+  //       });
 
-        res.cookie("auth_token", token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "strict",
-          maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
+  //       res.cookie("auth_token", token, {
+  //         httpOnly: true,
+  //         secure: process.env.NODE_ENV === "production",
+  //         sameSite: "strict",
+  //         maxAge: 7 * 24 * 60 * 60 * 1000,
+  //       });
 
-        return res.status(201).json({
-          message: "User registered successfully",
-          userId: result.insertedId,
-          user: { name, role, email, photoURL },
-          token,
-          premium: false,
-        });
-      } catch (error) {
-        console.error("Error in /api/users/register:", error);
-        return res.status(500).json({ message: "Internal server error" });
-      }
+  //       return res.status(201).json({
+  //         message: "User registered successfully",
+  //         userId: result.insertedId,
+  //         user: { name, role, email, photoURL },
+  //         token,
+  //         premium: false,
+  //       });
+  //     } catch (error) {
+  //       console.error("Error in /api/users/register:", error);
+  //       return res.status(500).json({ message: "Internal server error" });
+  //     }
+  //   });
+
+app.post("/api/users/register", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password)
+      return res.status(400).json({ message: "All fields required" });
+
+    const existingUser = await userCollection.findOne({ email });
+    if (existingUser)
+      return res.status(400).json({ message: "User already exists" });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const newUser = await userCollection.insertOne({
+      name,
+      email,
+      password: hashedPassword,
+      photoURL: "",
+      premium: false,
     });
 
+    const token = jwt.sign({ email }, process.env.JWT_SECRET, {
+      expiresIn: "7d",
+    });
 
+    res
+      .cookie("auth_token", token, { httpOnly: true })
+      .status(201)
+      .json({ message: "User registered", user: { name, email } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
     app.post("/api/users/login", async (req, res) => {
       try {
@@ -219,31 +252,52 @@ async function run() {
         return res.status(500).json({ message: "Internal server error" });
       }
     });
-    app.get("/api/users/me", verifyToken, async (req, res) => {
-      try {
-        const token = req.cookies.auth_token;
+    // app.get("/api/users/me", verifyToken, async (req, res) => {
+    //   try {
+    //     const token = req.cookies.auth_token;
 
-        if (!token) {
-          return res.status(401).json({ message: "Unauthorized" });
-        }
+    //     if (!token) {
+    //       return res.status(401).json({ message: "Unauthorized" });
+    //     }
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    //     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        const user = await userCollection.findOne({
-          email: decoded.email,
-        });
+    //     const user = await userCollection.findOne({
+    //       email: decoded.email,
+    //     });
 
-        if (!user) {
-          return res.status(404).json({ message: "User not found" });
-        }
+    //     if (!user) {
+    //       return res.status(404).json({ message: "User not found" });
+    //     }
 
-        res.json(user);
-      } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: "Server error" });
-      }
-    });
+    //     res.json(user);
+    //   } catch (err) {
+    //     console.error(err);
+    //     res.status(500).json({ message: "Server error" });
+    //   }
+    // });
 
+    // get current logged-in user
+app.get("/api/users/me", verifyToken, async (req, res) => {
+  try {
+    const email = req.decoded_email;
+    if (!email) return res.status(401).json({ message: "Unauthorized" });
+
+    const user = await userCollection.findOne(
+      { email },
+      { projection: { password: 0 } } // hide password
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json(user); // always send JSON
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
     // SOCIAL LOGIN (Google) - Handles both new users and existing ones
     app.post("/api/users/social-login", async (req, res) => {
       try {
@@ -289,17 +343,57 @@ async function run() {
         return res.status(500).json({ message: "Internal server error" });
       }
     });
+// app.get("/api/users/:email", async (req, res) => {
+//   const email = req.params.email;
+
+//   try {
+//     const user = await userCollection.findOne({ email: email });
+//     res.send(user);
+//   } catch (error) {
+//     res.status(500).send({ message: "Failed to get user", error });
+//   }
+// });
 app.get("/api/users/:email", async (req, res) => {
   const email = req.params.email;
-
   try {
-    const user = await userCollection.findOne({ email: email });
-    res.send(user);
+    const user = await userCollection.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" }); // <-- JSON return
+    }
+    res.json(user); // <-- always return JSON
   } catch (error) {
-    res.status(500).send({ message: "Failed to get user", error });
+    res.status(500).json({ message: "Failed to get user", error });
   }
 });
 
+app.post("/api/users/update-profile", verifyToken, async (req, res) => {
+  try {
+    const { name, photoURL } = req.body;
+    const email = req.user.email;
+
+    const updatedUser = await userCollection.findOneAndUpdate(
+      { email },
+      { $set: { name, photoURL } },
+      { returnDocument: "after" }
+    );
+
+    if (!updatedUser.value)
+      return res.status(404).json({ message: "User not found" });
+
+    res.json({
+      message: "Profile updated successfully",
+      user: {
+        name: updatedUser.value.name,
+        email: updatedUser.value.email,
+        photoURL: updatedUser.value.photoURL,
+        premium: updatedUser.value.premium || false,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 app.post("/watch-movie", verifyToken, async (req, res) => {
   try {
     const { movieId, title, poster, durationWatched } = req.body;
@@ -354,6 +448,7 @@ if (!movieId || !title || durationWatched == null) {
           price,
           genre,
           imdbRating,
+      
         } = req.body;
 
         if (!title || !description || !image) {
@@ -370,6 +465,7 @@ if (!movieId || !title || durationWatched == null) {
           price,
           genre,
           imdbRating,
+            views: 0,
           createdAt: new Date(),
         });
 
@@ -428,6 +524,7 @@ app.post("/api/series", async (req, res) => {
       title,
       image,
       description,
+      views: 0,
       seasons: seasons || [],
       createdAt: new Date(),
     };
@@ -1059,6 +1156,7 @@ app.post("/api/kids", async (req, res) => {
       image,
       video,
       genre,
+      views: 0,
       createdAt: new Date(),
     });
 
@@ -1122,6 +1220,87 @@ app.get("/api/recently-viewed", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Error in GET /api/recently-viewed:", err);
     res.status(500).json({ message: "Server error" });
+  }
+});
+app.get("/api/trending", async (req, res) => {
+  try {
+    // 🎬 Movies
+    const movieTrending = await movieCollection
+      .find()
+      .sort({ createdAt: -1, views: -1 })
+      .limit(5)
+      .toArray();
+
+    const moviePopular = await movieCollection
+      .find()
+      .sort({ views: -1 })
+      .limit(5)
+      .toArray();
+
+    // 📺 Series
+    const seriesTrending = await seriesCollection
+      .find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .toArray();
+
+    const seriesPopular = await seriesCollection
+      .find()
+      .sort({ createdAt: -1 }) 
+      .limit(5)
+      .toArray();
+
+    // 👶 Kids
+    const kidsTrending = await kidsCollection
+      .find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .toArray();
+
+    const kidsPopular = await kidsCollection
+      .find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .toArray();
+
+    res.send({
+      movieTrending,
+      moviePopular,
+      seriesTrending,
+      seriesPopular,
+      kidsTrending,
+      kidsPopular,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ message: "Server error" });
+  }
+});
+
+app.post("/api/view/:type/:id", async (req, res) => {
+  try {
+    const { type, id } = req.params;
+
+    let collection;
+
+    if (type === "movie") {
+      collection = movieCollection;
+    } else if (type === "series") {
+      collection = seriesCollection;
+    } else if (type === "kids") {
+      collection = kidsCollection;
+    } else {
+      return res.status(400).send({ message: "Invalid type" });
+    }
+
+    await collection.updateOne(
+      { _id: new ObjectId(id) },
+      { $inc: { views: 1 } }
+    );
+
+    res.send({ message: `${type} view counted` });
+  } catch (err) {
+    res.status(500).send(err);
   }
 });
     await client.db("admin").command({ ping: 1 });
